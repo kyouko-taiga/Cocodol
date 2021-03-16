@@ -1,5 +1,7 @@
 import Foundation
+
 import Cocodol
+import CodeGen
 
 /// The program's entry point.
 func run() {
