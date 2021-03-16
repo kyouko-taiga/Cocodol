@@ -1,0 +1,13 @@
+fun factorial(n) {
+  if (n > 1) {
+    ret n * factorial(n - 1)
+  } else {
+    ret 1
+  }
+}
+
+var i = 0
+while i < 15 {
+  print(factorial(i))
+  i = i + 1
+}

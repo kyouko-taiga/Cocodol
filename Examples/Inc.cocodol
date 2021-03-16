@@ -1,0 +1,13 @@
+fun inc(value, bit) {
+  if value & bit == 0 {
+    ret value | bit
+  } else {
+    ret inc(value & ~bit, bit << 1)
+  }
+}
+
+var i = 0
+while i < (1 << 20 - 1) {
+  i = inc(i, 1)
+}
+print(i)
