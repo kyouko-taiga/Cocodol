@@ -1,0 +1,16 @@
+fun makeCounter(initialValue) {
+  fun counter() {
+    var x = initialValue
+    initialValue = initialValue + 1
+    ret x
+  }
+  ret counter
+}
+
+{
+  var c1 = makeCounter(0)
+  var c2 = makeCounter(0)
+  print(c1())
+  print(c1())
+  print(c2())
+}

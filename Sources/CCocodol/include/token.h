@@ -19,6 +19,7 @@
 /// The kind of a token.
 typedef enum TokenKind {
   tk_error      =  0,
+
   tk_name       =  1,
   tk_true       =  2,
   tk_false      =  3,

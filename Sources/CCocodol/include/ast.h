@@ -4,6 +4,8 @@
 #include "common.h"
 #include "token.h"
 
+#define MAX_CAPTURE_COUNT 64
+
 #define NODE_DECL_BIT (1 << 16)
 #define NODE_EXPR_BIT (1 << 17)
 #define NODE_STMT_BIT (1 << 18)
@@ -96,7 +98,7 @@ typedef struct Node {
     long int integer_expr;
 
     /// The number's value.
-    float float_expr;
+    double float_expr;
 
     /// The prefix operator and the operand's expression.
     struct {
@@ -185,5 +187,15 @@ bool node_walk(NodeID index,
                struct Context* context,
                void*  user,
                bool   (*visit)(NodeID, NodeKind, bool, void*));
+
+/// Returns the list of identifiers captured by the given function declaration.
+///
+/// This represents the set of variables identifiers that occur free in the function, and that
+/// are said to be "captured" from the environment that surrounds the function declaration. A
+/// variable is free if refers to a binding outside of the function declaration.
+///
+/// The third parameter `symv` must be an array of token pointers, that is large enough to store
+/// `MAX_CAPTURE_COUNT` elements. The function returns the number of token pointers written.
+size_t capture_list(NodeID fun_index, struct Context* self, Token** symv);
 
 #endif

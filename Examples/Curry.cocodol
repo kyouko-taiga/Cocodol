@@ -1,0 +1,7 @@
+fun add(a) {
+  fun partial(b) {
+    ret a + b
+  }
+  ret partial
+}
+print(add(1)(2))

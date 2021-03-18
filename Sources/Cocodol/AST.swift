@@ -86,6 +86,16 @@ public struct NodeHandle {
     return T(handle: self)
   }
 
+  /// Wraps this handle into a type-erased adapter.
+  public func adaptAsAny() -> Node {
+    if let decl = adaptAsDecl() { return decl }
+    if let expr = adaptAsExpr() { return expr }
+    if let stmt = adaptAsStmt() { return stmt }
+
+    assert(kind == nk_error)
+    return ErrorNode(handle: self)
+  }
+
   /// Wraps this handle into a declaration adapter.
   public func adaptAsDecl() -> Decl? {
     switch kind {
@@ -122,7 +132,7 @@ public struct NodeHandle {
     case nk_while_stmt  : return adapt(as: WhileStmt.self)
     case nk_brk_stmt    : return adapt(as: BrkStmt.self)
     case nk_nxt_stmt    : return adapt(as: NxtStmt.self)
-    case nk_ret_stmt    : return adapt(as: NxtStmt.self)
+    case nk_ret_stmt    : return adapt(as: RetStmt.self)
     default: return nil
     }
   }
@@ -222,6 +232,21 @@ extension Node {
   @discardableResult
   public func walk<Walker>(with walker: Walker) -> Bool where Walker: NodeWalker {
     handle.walk(with: walker)
+  }
+
+}
+
+/// An error node.
+public struct ErrorNode: Node {
+
+  public let handle: NodeHandle
+
+  public init(handle: NodeHandle) {
+    self.handle = handle
+  }
+
+  public func unparse() -> String {
+    return "$\(handle.kind)"
   }
 
 }
@@ -331,6 +356,20 @@ public struct FunDecl: Decl {
   /// The body of the function.
   public var body: NodeHandle {
     return NodeHandle(context: handle.context, id: handle.contents.fun_decl.body)
+  }
+
+  /// The identifiers captured by the function.
+  public var captures: [CharacterView] {
+    let tokens = UnsafeMutablePointer<UnsafeMutablePointer<CCocodol.Token>?>.allocate(
+      capacity: Int(truncatingIfNeeded: MAX_CAPTURE_COUNT))
+    defer { tokens.deallocate() }
+
+    let count = capture_list(handle.id, handle.context.state, tokens)
+    return (0 ..< count).map({ (i) -> CharacterView in
+      let cToken = tokens[i]!.pointee
+      return CharacterView(
+        buffer: handle.context.source, startIndex: cToken.start, endIndex: cToken.end)
+    })
   }
 
   public func unparse() -> String {
@@ -467,7 +506,7 @@ public struct FloatExpr: Expr {
   public let handle: NodeHandle
 
   /// The value of the literal.
-  public var value: Float {
+  public var value: Double {
     return handle.contents.float_expr
   }
 

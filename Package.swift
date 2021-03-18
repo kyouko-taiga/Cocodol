@@ -11,7 +11,7 @@ let package = Package(
     .package(name: "LLVM", url: "https://github.com/llvm-swift/LLVMSwift.git", from: "0.7.0"),
   ],
   targets: [
-    .target(name: "cocodoc", dependencies: ["Cocodol", "CodeGen"]),
+    .target(name: "cocodoc", dependencies: ["Cocodol", "CodeGen", "LLVM"]),
     .target(name: "Cocodol", dependencies: ["CCocodol"]),
     .target(name: "CCocodol", exclude: ["build/", "src/main.c", "Makefile"]),
     .target(name: "CodeGen", dependencies: ["Cocodol", "LLVM"]),

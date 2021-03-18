@@ -8,8 +8,6 @@
 #include "context.h"
 #include "eval.h"
 
-#define MAX_CAPTURE_COUNT 64
-
 #define EVAL_STATUS_OK  0
 #define EVAL_STATUS_BRK 1
 #define EVAL_STATUS_ERR -1
@@ -17,7 +15,6 @@
 #define eval_stack_top(self)     (self->value_stack[(self)->value_index - 1])
 #define eval_stack(self, offset) (self->value_stack[(self)->value_index - 1 + (offset)])
 
-size_t capture_list(EvalState* self, NodeID fun_index, Token** symv);
 void   eval_pop_frame(EvalState* self);
 void*  free_symbol_entry(const char* key, void* value);
 void   value_copy(RuntimeValue* dst, RuntimeValue* src);
@@ -268,146 +265,6 @@ RuntimeValue* ident_lookup(EvalState* self, Ident* ident, EvalErrorCallback repo
   return NULL;
 }
 
-typedef struct {
-  EvalState* state;
-  NodeID fun_index;
-  NodeID body_index;
-  NodeID scope;
-  size_t symc;
-  Token** symv;
-} CaptureVisitorEnv;
-
-bool ident_is_local(CaptureVisitorEnv* env, Token* lhs) {
-  EvalState* self = env->state;
-  Token* rhs = NULL;
-
-  // Search within the function's local scopes.
-  NodeID scope_index = env->scope;
-  while (scope_index != ~0) {
-    // Get the declaration list of the current scope.
-    Node* scope = context_get_nodeptr(self->context, scope_index);
-    assert(scope->kind == nk_brace_stmt);
-
-    // Search within the current scope.
-    DeclList* list = scope->bits.brace_stmt.last_decl;
-    while (list) {
-      Node* decl = context_get_nodeptr(self->context, list->decl);
-      switch (decl->kind) {
-        case nk_var_decl: {
-          rhs = &decl->bits.var_decl.name;
-          if (token_text_equal(self->context, lhs, rhs)) {
-            // It's a reference to a local declaration; no further action required.
-            return true;
-          }
-          break;
-        }
-
-        default:
-          break;
-      }
-
-      list = list->prev;
-    }
-
-    // Move to the parent scope, unless we reached the function.
-    if (scope_index != env->body_index) {
-      scope_index = scope->bits.brace_stmt.parent;
-    } else {
-      scope_index = ~0;
-    }
-  }
-
-  // Check the function's parameters.
-  Node* fun_decl = context_get_nodeptr(self->context, env->fun_index);
-  for (size_t i = 0; i < fun_decl->bits.fun_decl.paramc; ++i) {
-    rhs = &fun_decl->bits.fun_decl.paramv[i];
-    if (token_text_equal(self->context, lhs, rhs)) {
-      // It's a reference to a parameter; no further action required.
-      return true;
-    }
-  }
-
-  // Check the function's name.
-  rhs = &fun_decl->bits.fun_decl.name;
-  if (token_text_equal(self->context, lhs, rhs)) {
-    // It's a recursive reference; no further action required.
-    return true;
-  }
-
-  // The symbol is defined externally.
-  return false;
-}
-
-bool capture_visitor(NodeID index, NodeKind kind, bool pre, void* user) {
-  CaptureVisitorEnv* env = (CaptureVisitorEnv*)user;
-  EvalState* self = env->state;
-
-  switch (kind) {
-    case nk_fun_decl: {
-      // Build the nested function's capture list.
-      Token* symv[MAX_CAPTURE_COUNT];
-      size_t symc = capture_list(self, index, symv);
-
-      // Check whether the nested function's captured symbols also escape the current function.
-      for (size_t i = 0; i < symc; ++i) {
-        if (!ident_is_local(env, symv[i])) {
-          assert(env->symc < MAX_CAPTURE_COUNT);
-          env->symv[env->symc] = symv[i];
-          env->symc++;
-        }
-      }
-
-      assert(pre);
-      return false;
-    }
-
-    case nk_obj_decl:
-      assert(false);
-
-    case nk_declref_expr: {
-      // Lookup the symbol statically.
-      Node* expr = context_get_nodeptr(self->context, index);
-      Token* lhs = &expr->bits.declref_expr;
-      if (!ident_is_local(env, lhs)) {
-        assert(env->symc < MAX_CAPTURE_COUNT);
-        env->symv[env->symc] = lhs;
-        env->symc++;
-      }
-
-      assert(pre);
-      return false;
-    }
-
-    case nk_brace_stmt:
-      if (pre) {
-        env->scope = index;
-      } else {
-        env->scope = context_get_nodeptr(self->context, index)->bits.brace_stmt.parent;
-      }
-      return true;
-
-    default:
-      // assert(pre);
-      return true;
-  }
-}
-
-/// Returns the list of variables occurring free in the given function declaration.
-size_t capture_list(EvalState* self, NodeID fun_index, Token** symv) {
-  NodeID body_index = context_get_nodeptr(self->context, fun_index)->bits.fun_decl.body;
-  CaptureVisitorEnv env = {
-    self      , // state of the interpreter
-    fun_index , // index of the declaration being visited
-    body_index, // index of the function's body
-    body_index, // initial search scope
-    0         , // identifier count
-    symv };
-
-  // Visit the function declaration.
-  node_walk(body_index, self->context, &env, capture_visitor);
-  return env.symc;
-}
-
 // ------------------------------------------------------------------------------------------------
 // MARK: Debug helpers
 // ------------------------------------------------------------------------------------------------
@@ -447,7 +304,7 @@ void eval_print(RuntimeValue* value) {
     case rv_lazy:
     case rv_print:
     case rv_function:
-      printf("$function\n");
+      fputs("$function\n", stdout);
       break;
   }
 }
@@ -507,7 +364,7 @@ bool eval_node(NodeID index, NodeKind kind, bool pre, void* user) {
 
         // Build the function's capture list.
         Token* symv[MAX_CAPTURE_COUNT];
-        size_t symc = capture_list(self, index, symv);
+        size_t symc = capture_list(index, self->context, symv);
 
         // Create the function's environment.
         if (symc > 0) {
