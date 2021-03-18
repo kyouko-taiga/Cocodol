@@ -364,7 +364,7 @@ bool eval_node(NodeID index, NodeKind kind, bool pre, void* user) {
 
         // Build the function's capture list.
         Token* symv[MAX_CAPTURE_COUNT];
-        size_t symc = capture_list(index, self->context, symv);
+        size_t symc = capture_set(index, self->context, symv, true);
 
         // Create the function's environment.
         if (symc > 0) {
@@ -899,7 +899,7 @@ int eval_program(EvalState* self,
     }
 
     // FIXME
-    assert(false && "no implemented");
+    assert(false && "not implemented");
   }
 
   // Evaluates the top-level declarations.

@@ -188,14 +188,18 @@ bool node_walk(NodeID index,
                void*  user,
                bool   (*visit)(NodeID, NodeKind, bool, void*));
 
-/// Returns the list of identifiers captured by the given function declaration.
+/// Returns the set of identifiers captured by the given function declaration.
 ///
 /// This represents the set of variables identifiers that occur free in the function, and that
 /// are said to be "captured" from the environment that surrounds the function declaration. A
 /// variable is free if refers to a binding outside of the function declaration.
 ///
-/// The third parameter `symv` must be an array of token pointers, that is large enough to store
-/// `MAX_CAPTURE_COUNT` elements. The function returns the number of token pointers written.
-size_t capture_list(NodeID fun_index, struct Context* self, Token** symv);
+/// The 3rd parameter `symv` must be an array of token pointers, that is large enough to store
+/// `MAX_CAPTURE_COUNT` elements. The function returns the number of token pointers written. The
+///  function uses it as the buckets of a hash set.
+///
+/// The 4th parameter `pack_result` is a flag indicating whether results should be packed at the
+/// beginning of `symv`.
+size_t capture_set(NodeID fun_index, struct Context* self, Token** symv, bool defrag);
 
 #endif

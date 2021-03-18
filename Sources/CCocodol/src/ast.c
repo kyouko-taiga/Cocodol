@@ -6,6 +6,8 @@
 
 #include "ast.h"
 #include "context.h"
+#include "token.h"
+#include "utils.h"
 
 void node_deinit(Node* self) {
   switch (self->kind) {
@@ -249,43 +251,64 @@ bool ident_is_local(CaptureVisitorEnv* env, Token* lhs) {
   return false;
 }
 
+bool capture_insert_symbol(Context* context, Token** symv, Token* new_sym) {
+  // Compute the index of the symbol to insert.
+  size_t h = fnv1_hash_buffer(context->source + new_sym->start, new_sym->end - new_sym->start);
+  size_t position = h % MAX_CAPTURE_COUNT;
+  size_t insert_position = position;
+  while (symv[insert_position] != NULL) {
+    if (token_text_equal(context, new_sym, symv[insert_position])) {
+      // The symbol is already in the capture list.
+      return false;
+    }
+
+    // Check the next position.
+    insert_position = (insert_position + 1) % MAX_CAPTURE_COUNT;
+    assert(insert_position != position);
+  }
+
+  symv[insert_position] = new_sym;
+  return true;
+}
+
 bool capture_visitor(NodeID index, NodeKind kind, bool pre, void* user) {
   CaptureVisitorEnv* env = (CaptureVisitorEnv*)user;
   Context* context = env->context;
 
   switch (kind) {
     case nk_fun_decl: {
-      // Build the nested function's capture list.
-      Token* symv[MAX_CAPTURE_COUNT];
-      size_t symc = capture_list(index, context, symv);
+      assert(pre);
 
-      // Check whether the nested function's captured symbols also escape the current function.
-      for (size_t i = 0; i < symc; ++i) {
-        if (!ident_is_local(env, symv[i])) {
-          assert(env->symc < MAX_CAPTURE_COUNT);
-          env->symv[env->symc] = symv[i];
+      // Build and merge the nested function's capture list.
+      Token* symv[MAX_CAPTURE_COUNT];
+      capture_set(index, context, symv, false);
+
+      for (size_t i = 0; i < MAX_CAPTURE_COUNT; ++i) {
+        // Check whether the nested function's captured symbols also escape the current function.
+        if ((symv[i] != NULL) &&
+            !ident_is_local(env, symv[i]) &&
+            capture_insert_symbol(context, env->symv, symv[i])) {
           env->symc++;
         }
       }
 
-      assert(pre);
       return false;
     }
 
     case nk_obj_decl:
-      assert(false);
+      assert(false && "not implemented");
 
     case nk_declref_expr: {
+      assert(pre);
+
       // Lookup the symbol statically.
       Node* expr = context_get_nodeptr(context, index);
       Token* lhs = &expr->bits.declref_expr;
-      if (!ident_is_local(env, lhs)) {
-        assert(env->symc < MAX_CAPTURE_COUNT);
-        env->symv[env->symc] = lhs;
+      if (!ident_is_local(env, lhs) &&
+          capture_insert_symbol(context, env->symv, lhs)) {
         env->symc++;
       }
 
-      assert(pre);
       return false;
     }
 
@@ -303,8 +326,7 @@ bool capture_visitor(NodeID index, NodeKind kind, bool pre, void* user) {
   }
 }
 
-/// Returns the list of variables occurring free in the given function declaration.
-size_t capture_list(NodeID fun_index, Context* context, Token** symv) {
+size_t capture_set(NodeID fun_index, Context* context, Token** symv, bool defrag) {
   memset(symv, 0, MAX_CAPTURE_COUNT * sizeof(Token*));
 
   NodeID body_index = context_get_nodeptr(context, fun_index)->bits.fun_decl.body;
@@ -318,5 +340,17 @@ size_t capture_list(NodeID fun_index, Context* context, Token** symv) {
 
   // Visit the function declaration.
   node_walk(body_index, context, &env, capture_visitor);
+
+  // Defragment the results, if requested to.
+  if (defrag) {
+    size_t free_position = 0;
+    for (size_t i = 0; i < MAX_CAPTURE_COUNT; ++i) {
+      if (symv[i] != NULL) {
+        symv[free_position] = symv[i];
+        free_position += 1;
+      }
+    }
+  }
+
   return env.symc;
 }

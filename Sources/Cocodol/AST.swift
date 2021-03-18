@@ -364,7 +364,7 @@ public struct FunDecl: Decl {
       capacity: Int(truncatingIfNeeded: MAX_CAPTURE_COUNT))
     defer { tokens.deallocate() }
 
-    let count = capture_list(handle.id, handle.context.state, tokens)
+    let count = capture_set(handle.id, handle.context.state, tokens, true)
     return (0 ..< count).map({ (i) -> CharacterView in
       let cToken = tokens[i]!.pointee
       return CharacterView(
