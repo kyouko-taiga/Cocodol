@@ -4,6 +4,44 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+void _cocodol_drop(int64_t _0, int64_t _1) {
+  if ((_1 != 0) && ((_0 & 3) == COCODOL_RT_FUNCTION)) {
+    void*       base      = (void*)_1 - sizeof(int64_t);
+    int64_t     env_size  = *((int64_t*)base);
+    AnyObject*  env       = (AnyObject*)_1;
+
+    for (int64_t i = 0; i < env_size; ++i) {
+      _cocodol_drop(env[i]._0, env[i]._1);
+    }
+
+#ifdef DEBUG
+    printf("drop function env %p\n", base);
+#endif
+    free(base);
+  }
+}
+
+AnyObject _cocodol_copy(int64_t _0, int64_t _1) {
+  AnyObject dst = { _0, _1 };
+
+  if ((_1 != 0) && ((_0 & 3) == COCODOL_RT_FUNCTION)) {
+    void*       base      = (void*)_1 - sizeof(int64_t);
+    int64_t     env_size  = *((int64_t*)base);
+    AnyObject*  env       = (AnyObject*)_1;
+    void*       new_base  = malloc(sizeof(int64_t) + env_size * sizeof(AnyObject));
+#ifdef DEBUG
+    printf("copy function env %p to %p\n", base, new_base);
+#endif
+    AnyObject*  new_env   = (AnyObject*)(new_base + sizeof(int64_t));
+    for (int64_t i = 0; i < env_size; ++i) {
+      new_env[i] = _cocodol_copy(env[i]._0, env[i]._1);
+    }
+    dst._1 = (int64_t)new_env;
+  }
+
+  return dst;
+}
+
 void _cocodol_print(int64_t _0, int64_t _1) {
 //  printf("%lli, %lli\n", _0, _1); return;
   switch (_0) {

@@ -53,16 +53,37 @@ public final class Emitter {
       any)
   }
 
-  /// C's `calloc` function.
-  var callocFunction: Function {
-    if let fun = module.function(named: "calloc") {
+  /// C's `malloc` function.
+  var mallocFunction: Function {
+    if let fun = module.function(named: "malloc") {
       return fun
     }
 
     // Forward-declare the function
     return builder.addFunction(
-      "calloc",
-      type: FunctionType([i64, i64], PointerType.toVoid))
+      "malloc", type: FunctionType([i64], PointerType.toVoid))
+  }
+
+  /// Cocodol's built-in `drop` function.
+  var dropFunction: Function {
+    if let fun = module.function(named: "_cocodol_drop") {
+      return fun
+    }
+
+    // Forward-declare the function
+    return builder.addFunction(
+      "_cocodol_drop", type: FunctionType([i64, i64], void))
+  }
+
+  /// Cocodol's built-in `copy` function.
+  var copyFunction: Function {
+    if let fun = module.function(named: "_cocodol_copy") {
+      return fun
+    }
+
+    // Forward-declare the function
+    return builder.addFunction(
+      "_cocodol_copy", type: FunctionType([i64, i64], any))
   }
 
   /// The function that implements Cocodol's built-in unary operators.
@@ -73,8 +94,7 @@ public final class Emitter {
 
     // Forward-declare the function
     return builder.addFunction(
-      "_cocodol_unop",
-      type: FunctionType([i64, i64, i32], any))
+      "_cocodol_unop", type: FunctionType([i64, i64, i32], any))
   }
 
   /// The function that implements Cocodol's built-in binary operators.
@@ -85,8 +105,7 @@ public final class Emitter {
 
     // Forward-declare the function
     return builder.addFunction(
-      "_cocodol_binop",
-      type: FunctionType([i64, i64, i64, i64, i32], any))
+      "_cocodol_binop", type: FunctionType([i64, i64, i64, i64, i32], any))
   }
 
   /// Cocodol's built-in `print` function.
@@ -97,20 +116,20 @@ public final class Emitter {
 
     // Forward-declare the function
     return builder.addFunction(
-      "_cocodol_print",
-      type: FunctionType([i64, i64], void))
+      "_cocodol_print", type: FunctionType([i64, i64], void))
   }
 
   /// Cocodol's built-in `print` function, wrapped as a function object.
   var printFunctionObject: IRValue {
-    if let fun = module.function(named: "_cododol_print.wrapper") {
+    if let fun = module.function(named: "_cocodol_print.wrapper") {
       return fun
     }
 
     // Save the current insertion pointer.
     let current = builder.insertBlock
 
-    var fun = builder.addFunction("_cododol_print.wrapper", type: userFunType(paramCount: 1))
+    var fun = builder.addFunction(
+      "_cocodol_print.wrapper", type: userFunType(paramCount: 1))
     fun.linkage = .private
     fun.addAttribute(.argmemonly, to: .function)
     fun.addAttribute(.norecurse , to: .function)
@@ -335,19 +354,27 @@ public final class Emitter {
       ? []
       : decl.captures
 
-    let env: IRValue
+    var env: IRValue
     if !captures.isEmpty {
       // Allocate and populate the function's environment.
-      env = builder.buildBitCast(
-        builder.buildCall(
-          callocFunction,
-          args: [i64.constant(captures.count), emit(sizeOf: any)]),
-        type: PointerType(pointee: any))
+      let size = builder.buildAdd(
+        emit(sizeOf: i64),
+        builder.buildMul(i64.constant(captures.count), emit(sizeOf: any)))
+      env = builder.buildCall(mallocFunction, args: [size])
+
+      // Store the size of the environment.
+      let count = builder.buildBitCast(env, type: PointerType(pointee: i64))
+      builder.buildStore(i64.constant(captures.count), to: count)
+
+      // Store the captured parameters.
+      env = builder.buildGEP(env, type: PointerType.toVoid.pointee, indices: [emit(sizeOf: i64)])
+      env = builder.buildBitCast(env, type: PointerType(pointee: any))
 
       for (i, capture) in captures.enumerated() {
-        let val = builder.buildLoad(functionContexts.last!.value(boundTo: String(capture))!, type: any)
-        let loc = builder.buildGEP(env, type: any, indices: [i32.constant(i)])
-        builder.buildStore(val, to: loc)
+        let val = builder.buildLoad(
+          functionContexts.last!.value(boundTo: String(capture))!, type: any)
+        let loc = builder.buildGEP(env, type: any, indices: [i64.constant(i)])
+        builder.buildStore(emit(copy: val), to: loc)
       }
     } else {
       env = PointerType(pointee: any).null()
@@ -355,7 +382,7 @@ public final class Emitter {
 
     // Create a function object if the declaration is local.
     if !isTopLevel {
-      let loc = addEntryAlloca(type: any)
+      let loc = addEntryAlloca(type: any, name: String(decl.name))
       builder.buildStore(constObject(fun: fun), to: loc)
       let _1 = builder.buildStructGEP(loc, type: any, index: 1)
       builder.buildStore(builder.buildPtrToInt(env, type: i64), to: _1)
@@ -517,7 +544,7 @@ public final class Emitter {
 
     // Emit the assignment.
     let rvalue = try emit(expr: assignment.rhs.adaptAsExpr()!)
-    return builder.buildStore(rvalue, to: lvalue)
+    return builder.buildStore(emit(copy: rvalue), to: lvalue)
   }
 
   /// Emits a function application.
@@ -570,28 +597,34 @@ public final class Emitter {
       args.append(arg)
 
       let val = try emit(expr: subexpr.adaptAsExpr()!)
-      builder.buildStore(val, to: arg)
+      builder.buildStore(emit(copy: val), to: arg)
     }
 
     // If we found a function object, apply it.
+    let result: Call
     if let callee = object {
-      emit(callee, isA: .function)
+      // Extract the function pointer.
+      emit(assert: callee, isA: .function)
       let fun = emit(
-        extractFunPointerFrom: callee,
+        extractFunFrom: callee,
         type: userFunType(paramCount: args.count))
-      let env = emit(extractEnvPointerFrom: callee)
+      let env = emit(extractEnvFrom: callee)
 
-      // Emit the call.
-      return builder.buildCall(fun, args: args + [env])
+      // Emit a call to a location function.
+      result = builder.buildCall(fun, args: args + [env])
+    } else if let fun = global {
+      // Emit a call to a global function..
+      result = builder.buildCall(fun, args: args + [PointerType(pointee: any).null()])
+    } else {
+      unreachable()
     }
 
-    // If we found a global function, apply it.
-    if let fun = global {
-      // Emit the call.
-      return builder.buildCall(fun, args: args + [PointerType(pointee: any).null()])
+    // Drop the arguments.
+    for arg in args {
+      emit(dropPointer: arg)
     }
 
-    unreachable()
+    return result
   }
 
   /// Emits a parenthesized expression.
@@ -601,15 +634,21 @@ public final class Emitter {
 
   /// Emits a brace statement.
   func emit(stmt: BraceStmt) throws -> EmitterAction {
-    functionContexts[functionContexts.count - 1].pushScope()
+    functionContexts[functionContexts.count - 1].pushScope(stmt: stmt)
     defer { functionContexts[functionContexts.count - 1].popScope() }
 
+    // Emit all statements in the scope.
     for hndl in stmt.stmts {
       let action = try emit(any: hndl.adaptAsAny())
       guard action == .proceed else {
         return action
       }
     }
+
+    // Drop the local scope.
+    let scope = functionContexts.last!.scopes.last!
+    emit(drop: scope)
+
     return .proceed
   }
 
@@ -625,7 +664,7 @@ public final class Emitter {
 
     // Emit the condition.
     let cond = try emit(expr: stmt.cond.adaptAsExpr()!)
-    emit(cond, isA: .bool)
+    emit(assert: cond, isA: .bool)
     var condValue = builder.buildExtractValue(cond, index: 1)
     condValue = builder.buildICmp(condValue, i64.zero(), .notEqual)
 
@@ -658,14 +697,24 @@ public final class Emitter {
       builder.positionAtEnd(of: joinBB)
       return .proceed
 
-    case (.unwind(let a), .unwind(let b)) where a == b:
-      // If both branches unwind to the same location, we can unwind there as well.
-      return .unwind(a)
+    case (.unwind(let a), .unwind(let b)):
+      if (a == b) {
+        // If both branches unwind to the same location, we can unwind there as well.
+        return .unwind(dest: a)
+      } else {
+        // Otherwise, since Cocodol has no loop labels, one must be the current function and we can
+        // simply unwind to it.
+        let decl = functionContexts.last!.decl
+        return .unwind(dest: decl!.handle)
+      }
 
     default:
-      // If both branches unwind at different locations, we proceed in a "dead" block.
-      let joinBB = fun.appendBasicBlock(named: "join")
-      builder.positionAtEnd(of: joinBB)
+      // If one branch unwinds but the other doesn't, we must proceed at the end of the former.
+      if thenAction == .proceed {
+        builder.positionAtEnd(of: thenBB)
+      } else {
+        builder.positionAtEnd(of: elseBB)
+      }
       return .proceed
     }
   }
@@ -680,7 +729,7 @@ public final class Emitter {
     builder.positionAtEnd(of: headBB)
 
     let cond = try emit(expr: stmt.cond.adaptAsExpr()!)
-    emit(cond, isA: .bool)
+    emit(assert: cond, isA: .bool)
     var condValue = builder.buildExtractValue(cond, index: 1)
     condValue = builder.buildICmp(condValue, i64.zero(), .notEqual)
 
@@ -694,17 +743,17 @@ public final class Emitter {
     builder.positionAtEnd(of: bodyBB)
     switch try emit(stmt: stmt.body.adapt(as: BraceStmt.self)!) {
     case .proceed:
+      // Emit a terminator instruction that jumps to the loop's head before proceeding.
       builder.buildBr(headBB)
-      builder.positionAtEnd(of: tailBB)
-      return .proceed
 
-    case .unwind(stmt.handle):
-      builder.positionAtEnd(of: tailBB)
-      return .proceed
-
-    case let action:
-      return action
+    case .unwind:
+      // A terminator instruction has already been emitted for the loop body; we can proceed.
+      break
     }
+
+    // Position the builder at the tail of the loop.
+    builder.positionAtEnd(of: tailBB)
+    return .proceed
   }
 
   /// Emits a `brk` statement.
@@ -713,8 +762,15 @@ public final class Emitter {
       throw EmitterError(message: "'brk' outside of a loop", range: stmt.handle.range)
     }
 
+    // Drop all local scopes inside the loop.
+    for scope in functionContexts.last!.scopes.reversed() {
+      emit(drop: scope)
+      guard scope.node != ctx.loop.body else { break }
+    }
+
+    // Jump to the loop's tail.
     builder.buildBr(ctx.tail)
-    return .unwind(ctx.loop.handle)
+    return .unwind(dest: ctx.loop.handle)
   }
 
   /// Emits a `nxt` statement.
@@ -723,8 +779,15 @@ public final class Emitter {
       throw EmitterError(message: "'nxt' outside of a loop", range: stmt.handle.range)
     }
 
+    // Drop all local scopes inside the loop.
+    for scope in functionContexts.last!.scopes.reversed() {
+      emit(drop: scope)
+      guard scope.node != ctx.loop.body else { break }
+    }
+
+    // Jump to the loop's head.
     builder.buildBr(ctx.head)
-    return .unwind(ctx.loop.handle)
+    return .unwind(dest: ctx.loop.handle)
   }
 
   /// Emits a return statement.
@@ -735,46 +798,109 @@ public final class Emitter {
       throw EmitterError(message: "'ret' outside of a function", range: stmt.handle.range)
     }
 
-    let rvalue = try emit(expr: stmt.value.adaptAsExpr()!)
-    builder.buildRet(rvalue)
-    return .unwind(decl.handle)
-  }
+    // Emit the return value and copy it.
+    let rvalue = emit(copy: try emit(expr: stmt.value.adaptAsExpr()!))
 
-  /// Emits a piece of code to check whether the given value is of the specified type.
-  func emit(_ value: IRValue, isA kind: ObjectKind) {
-    let fun = builder.currentFunction!
-
-    var cond = builder.buildExtractValue(value, index: 0)
-    if kind == .function {
-      // Function types are encoded in the low bits.
-      cond = builder.buildAnd (cond, 0b11)
-      cond = builder.buildICmp(cond, kind.rawValue, .notEqual)
-    } else {
-      // Other kinds can be checked with simple equality.
-      cond = builder.buildICmp(cond, i64.constant(kind.rawValue), .notEqual)
+    // Drop all local scopes.
+    for scope in ctx.scopes.reversed() {
+      // Don't drop the argument scope.
+      guard scope.node?.adapt(as: FunDecl.self) == nil else { break }
+      emit(drop: scope)
     }
 
-    let failBB = fun.appendBasicBlock(named: "fail")
-    let contBB = fun.appendBasicBlock(named: "cont")
+    // Emit the return statement.
+    builder.buildRet(rvalue)
+    return .unwind(dest: decl.handle)
+  }
 
-    builder.buildCondBr(condition: cond, then: failBB, else: contBB)
-    builder.positionAtEnd(of: failBB)
+  /// Emits a copy of the given value.
+  func emit(copy value: IRValue) -> IRValue {
+    let _0 = builder.buildExtractValue(value, index: 0)
+    let _1 = builder.buildExtractValue(value, index: 1)
+    return builder.buildCall(copyFunction, args: [_0, _1])
+  }
+
+  /// Emits the destruction of the given value.
+  /// Emits a piece of code that drops (i.e., deinitializes and deallocate) the give value.
+  func emit(drop value: IRValue) {
+    let _0 = builder.buildExtractValue(value, index: 0)
+    let _1 = builder.buildExtractValue(value, index: 1)
+    _ = builder.buildCall(dropFunction, args: [_0, _1])
+  }
+
+  /// Emits the destruction of value pointed by the given pointer.
+  func emit(dropPointer pointer: IRValue) {
+    let _0 = builder.buildLoad(
+      builder.buildStructGEP(pointer, type: any, index: 0), type: i64)
+    let _1 = builder.buildLoad(
+      builder.buildStructGEP(pointer, type: any, index: 1), type: i64)
+    _ = builder.buildCall(dropFunction, args: [_0, _1])
+  }
+
+  /// Emits a piece of code that drops (i.e., deinitializes and deallocate) the values bound to the
+  /// given scope.
+  func emit(drop scope: FunContext.Scope) {
+    scope.bindings.values.forEach(emit(dropPointer:))
+  }
+
+  /// Emits a piece of code that checks whether the given tag denotes the specified type.
+  func emit(_ tag: IRValue, is kind: ObjectKind) -> IRValue {
+    if kind == .function {
+      // Function types are encoded in the low bits.
+      let tmp = builder.buildAnd(tag, 0b11)
+      return builder.buildICmp(tmp, kind.rawValue, .equal)
+    } else {
+      // Other kinds can be checked with simple equality.
+      return builder.buildICmp(tag, i64.constant(kind.rawValue), .equal)
+    }
+  }
+
+  /// Emits a piece of code that checks whether the given value is of the specified type.
+  func emit(_ value: IRValue, isA kind: ObjectKind) -> IRValue {
+    let tag = builder.buildExtractValue(value, index: 0)
+    return emit(tag, is: kind)
+  }
+
+  /// Emits a piece of code that checks whether the value pointed by the given pointer is of the
+  /// specified type.
+  func emit(_ pointer: IRValue, isPointerTo kind: ObjectKind) -> IRValue {
+    let tag = builder.buildStructGEP(pointer, type: any, index: 0)
+    return emit(builder.buildLoad(tag, type: i64), is: kind)
+  }
+
+  /// Emits a piece of code asserting that the given value is of the specified type.
+  func emit(assert value: IRValue, isA kind: ObjectKind) {
+    let fun = builder.currentFunction!
+
+    let cond = emit(value, isA: kind)
+    let fail = fun.appendBasicBlock(named: "fail")
+    let next = fun.appendBasicBlock(named: "next")
+
+    builder.buildCondBr(condition: cond, then: next, else: fail)
+    builder.positionAtEnd(of: fail)
     _ = builder.buildCall(module.intrinsic(Intrinsic.ID.llvm_trap)!, args: [])
     builder.buildUnreachable()
-    builder.positionAtEnd(of: contBB)
+    builder.positionAtEnd(of: next)
   }
 
   /// Emits the extraction of a function pointer from the lower part of an object.
-  func emit(extractFunPointerFrom object: IRValue, type: FunctionType) -> IRValue {
+  func emit(extractFunFrom object: IRValue, type: FunctionType) -> IRValue {
     var _0 = builder.buildExtractValue(object, index: 0)
     _0 = builder.buildAnd(_0, i64.constant(~ObjectKind.function.rawValue))
     return builder.buildIntToPtr(_0, type: PointerType(pointee: type))
   }
 
   /// Emits the extraction of a function's environment from the upper part of an object.
-  func emit(extractEnvPointerFrom object: IRValue) -> IRValue {
+  func emit(extractEnvFrom object: IRValue) -> IRValue {
     let _1 = builder.buildExtractValue(object, index: 1)
     return builder.buildIntToPtr(_1, type: PointerType(pointee: any))
+  }
+
+  /// Emits the extraction of a function's environment from the upper part of the object pointed by
+  /// the given value.
+  func emit(extractEnvFromPointer pointer: IRValue) -> IRValue {
+    let _1 = builder.buildStructGEP(pointer, type: any, index: 1)
+    return builder.buildIntToPtr(builder.buildLoad(_1, type: i64), type: PointerType(pointee: any))
   }
 
   /// Emits the size of the given type, as an `i64`.
@@ -813,16 +939,16 @@ struct FunContext {
   let decl: FunDecl?
 
   /// A collection with the bindings of each lexical scope traversed by the code generator.
-  var scopes: [[String: IRValue]]
+  var scopes: [Scope]
 
   init(decl: FunDecl?) {
     self.decl   = decl
-    self.scopes = [[:]]
+    self.scopes = [Scope(node: decl?.handle)]
   }
 
   func value(boundTo name: String) -> IRValue? {
     for scope in scopes.reversed() {
-      if let value = scope[name] {
+      if let value = scope.bindings[name] {
         return value
       }
     }
@@ -830,16 +956,26 @@ struct FunContext {
   }
 
   mutating func bind(value: IRValue, to name: String) {
-    scopes[scopes.count - 1][name] = value
+    scopes[scopes.count - 1].bindings[name] = value
   }
 
-  mutating func pushScope() {
-    scopes.append([:])
+  mutating func pushScope(stmt: BraceStmt) {
+    scopes.append(Scope(node: stmt.handle))
   }
 
   mutating func popScope() {
     scopes.removeLast()
     assert(!scopes.isEmpty)
+  }
+
+  struct Scope {
+
+    /// The node that delimits the scope.
+    let node: NodeHandle?
+
+    /// The local bindings of the scope.
+    var bindings: [String: IRValue] = [:]
+
   }
 
 }
@@ -866,6 +1002,6 @@ enum EmitterAction: Equatable {
 
   /// Climb back the tree without emitting any additional instruction until reaching the specified
   /// loop statement or function declaration.
-  case unwind(NodeHandle)
+  case unwind(dest: NodeHandle)
 
 }

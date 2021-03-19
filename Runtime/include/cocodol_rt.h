@@ -62,9 +62,19 @@ typedef struct AnyObject {
   int64_t _0, _1;
 } AnyObject;
 
-void _cocodol_print(int64_t _0, int64_t _1);
+/// Deinitializes and deallocates the given value.
+void _cocodol_drop      (int64_t _0, int64_t _1);
 
+/// Copies the given value.
+AnyObject _cocodol_copy (int64_t _0, int64_t _1);
+
+/// Prints the given value.
+void _cocodol_print     (int64_t _0, int64_t _1);
+
+/// Applies the specified binary operator on the given operands.
 AnyObject _cocodol_binop(int64_t _a0, int64_t _a1, int64_t _b0, int64_t _b1, uint32_t op);
-AnyObject _cocodol_unop(int64_t _a0, int64_t _a1, uint32_t op);
+
+/// Applies the specified binary operator on the given operand.
+AnyObject _cocodol_unop (int64_t _a0, int64_t _a1, uint32_t op);
 
 #endif
