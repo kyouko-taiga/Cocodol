@@ -9,7 +9,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "0.4.0"),
-    .package(name: "LLVM", url: "https://github.com/llvm-swift/LLVMSwift.git", from: "0.7.0"),
+    .package(name: "LLVM", url: "https://github.com/llvm-swift/LLVMSwift.git", .branch("master")),
   ],
   targets: [
     // The driver's target.

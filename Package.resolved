@@ -2,30 +2,12 @@
   "object": {
     "pins": [
       {
-        "package": "Chalk",
-        "repositoryURL": "https://github.com/mxcl/Chalk.git",
-        "state": {
-          "branch": null,
-          "revision": "9aa9f348b86db3cf6702a3e43c081ecec80cf3c7",
-          "version": "0.4.0"
-        }
-      },
-      {
-        "package": "FileCheck",
-        "repositoryURL": "https://github.com/llvm-swift/FileCheck.git",
-        "state": {
-          "branch": null,
-          "revision": "0dc8a5bff1a7f01e1d7bcc20c79e2127b2ea3eeb",
-          "version": "0.2.5"
-        }
-      },
-      {
         "package": "LLVM",
         "repositoryURL": "https://github.com/llvm-swift/LLVMSwift.git",
         "state": {
-          "branch": null,
-          "revision": "bc303e09b3100b807d66efe6c98b7e7019a69d70",
-          "version": "0.7.0"
+          "branch": "master",
+          "revision": "ca22dde55da9f6e64b07dfa49701f340a8c1f859",
+          "version": null
         }
       },
       {
