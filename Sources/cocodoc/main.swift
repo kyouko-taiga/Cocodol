@@ -175,7 +175,7 @@ func makeExec(target: TargetMachine, module: Module, args: DriverArguments) thro
   // Produce the executable.
   let linkExec = Process()
   linkExec.executableURL = clangURL
-  linkExec.arguments = [moduleObject.path, args.runtimePath, "-o", productURL.path]
+  linkExec.arguments = [moduleObject.path, args.runtimePath, "-lm", "-o", productURL.path]
   try linkExec.run()
 }
 
