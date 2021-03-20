@@ -1,266 +1,146 @@
 import Foundation
 
+import ArgumentParser
 import Cocodol
 import CodeGen
 import LLVM
 
-extension FileHandle: TextOutputStream {
+/// The compiler driver.
+struct Cocodoc: ParsableCommand {
 
-  public func write(_ string: String) {
-    let data = string.data(using: .utf8)!
-    write(data)
-  }
+  @Argument(help: "The source program.", transform: URL.init(fileURLWithPath:))
+  var inputFile: URL
 
-  static func << (handle: FileHandle, string: String) {
-    handle.write(string)
-  }
-
-}
-
-/// The mode of the compiler.
-enum OutputMode {
-
-  /// Emits a compiled file.
-  ///
-  /// The "value" of this mode is determined by the extension of the output file given as argument.
-  /// The `.bc` extension designates LLVM bitcode, `.o` designates an object file, and finally `.s`
-  /// designates an assembly file. For any other file extension, the value of the mode is `nil` and
-  /// designates an executable.
-  case emit(CodegenFileType?)
-
-  /// Evaluates the program.
-  case eval
-
-}
-
-/// An error that occured while executing the driver.
-struct DriverError: Error, CustomStringConvertible {
-
-  var description: String
-
-}
-
-/// A set of driver arguments.
-struct DriverArguments {
-
-  /// Indicates that the driver should print the unparsed AST of the program, right after it has
-  /// been parsed.
-  var unparse = false
-
-  /// Inidicates that the driver should interpret the program, rather than compiling it.
-  var eval = false
-
-  /// Indicates that the driver should compile with optimizations.
+  @Flag(name: [.customShort("O"), .long], help: "Compile with optimizations.")
   var optimize = false
 
-  /// Indicates that the driver should dump the LLVM IR of the program.
-  var dumpIR = false
+  @Option(name: [.short, .customLong("output")],
+          help: "Write the output to <output>.")
+  var outputFile: String?
 
-  /// The path of the source program.
-  var sourcePath = ""
-
-  /// The output path the driver's product.
-  var productPath = ""
-
-  /// The path of Cocodol' runtime library.
+  @Option(name: [.customLong("lib")],
+          help: "The path to the runtime library.")
   var runtimePath = "/usr/local/lib/libcocodol_rt.a"
 
-  /// The path of clang's executable.
+  @Option(name: [.customLong("clang")], help: "The path to clang.")
   var clangPath = "/usr/bin/clang"
 
-  /// The type of file to emit.
-  ///
-  /// This argument's value is determined by the extension of the output file: `.bc`designates LLVM
-  /// bitcode, `.o` designates an object file, and `.s` designates an assembly file. For any other
-  /// file extension, the value of the mode is `nil` and designates an executable.
-  var fileType: CodegenFileType?
+  @Flag(help: "Print the program as it has been parsed without compiling it.")
+  var unparse = false
 
-  /// Initializes the driver's arguments.
-  ///
-  /// - Parameter arguments: An array of raw arguments.
-  init(arguments: [String]) throws {
-    var args = arguments.dropFirst()
+  @Flag(help: "Evaluate the program without compiling it.")
+  var eval = false
 
-    while let name = args.first {
-      args.removeFirst()
-      switch name {
-      case "-u", "--unparse":
-        unparse = true
+  @Flag(help: "Emits the LLVM IR of the program.")
+  var emitIR = false
 
-      case "-e", "--eval":
-        eval = true
+  @Flag(help: "Emits an assembly file.")
+  var emitAssembly = false
 
-      case "-O", "--optimize":
-        optimize = true
+  @Flag(help: "Emits an object file.")
+  var emitObject = false
 
-      case "--dump-ir":
-        dumpIR = true
-
-      case "-l", "--lib":
-        guard let path = args.popFirst() else {
-          throw DriverError(description: "missing directory path")
-        }
-        guard !path.starts(with: "-") else {
-          throw DriverError(description: "missing argument after \(name)")
-        }
-        runtimePath = path
-
-      case "--clang":
-        guard let path = args.popFirst() else {
-          throw DriverError(description: "missing directory path")
-        }
-        guard !path.starts(with: "-") else {
-          throw DriverError(description: "missing argument after \(name)")
-        }
-        clangPath = path
-
-      case "-o", "--output":
-        guard let path = args.popFirst() else {
-          throw DriverError(description: "missing output file")
-        }
-        guard !path.starts(with: "-") else {
-          throw DriverError(description: "missing argument after \(name)")
-        }
-        productPath = path
-
-        if let dot = path.lastIndex(of: ".") {
-          switch path.suffix(from: path.index(after: dot)) {
-          case "bc" : fileType = .bitCode
-          case "o"  : fileType = .object
-          case "s"  : fileType = .assembly
-          default: break
-          }
-        }
-
-      default:
-        guard sourcePath.isEmpty else {
-          throw DriverError(description: "unexpected parameter '\(name)'")
-        }
-        sourcePath = name
-      }
-    }
-
-    // Make sure there's an input.
-    guard !sourcePath.isEmpty else {
-      throw DriverError(description: "no input file")
-    }
-
-    // Generate a product path if none was given.
-    if productPath.isEmpty {
+  /// The output path the driver's product.
+  var productFile: URL {
+    if let path = outputFile {
+      return URL(fileURLWithPath: path)
+    } else {
       let cwd = FileManager.default.currentDirectoryPath
-      var url = URL(fileURLWithPath: sourcePath)
-      url.deletePathExtension()
-      productPath = URL(fileURLWithPath: cwd).appendingPathComponent(url.lastPathComponent).path
+      return URL(fileURLWithPath: cwd)
+        .appendingPathComponent(inputFile.deletingPathExtension().lastPathComponent)
     }
   }
 
-}
+  mutating func run() throws {
+    // Open and read the input file.
+    let source = try String(contentsOf: inputFile)
 
-/// Generates a product.
-func makeExec(target: TargetMachine, module: Module, args: DriverArguments) throws {
-  let productURL = URL(fileURLWithPath: args.productPath)
-  let clangURL = URL(fileURLWithPath: args.clangPath)
+    // Parse the program.
+    let context = Context(source: source)
+    let parser = Parser(in: context)
+    let decls = parser.parse()
 
-  // Create a temporary directory.
-  let tmp = try FileManager.default.url(
-    for: .itemReplacementDirectory,
-    in: .userDomainMask,
-    appropriateFor: productURL,
-    create: true)
-
-  // Compile the LLVM module.
-  let moduleObject = tmp.appendingPathComponent(module.name).appendingPathExtension("o")
-  try target.emitToFile(module: module, type: .object, path: moduleObject.path)
-
-  // Produce the executable.
-  let linkExec = Process()
-  linkExec.executableURL = clangURL
-  linkExec.arguments = [moduleObject.path, args.runtimePath, "-lm", "-o", productURL.path]
-  try linkExec.run()
-}
-
-/// The program's entry point.
-func run() throws {
-  var stderr = FileHandle.standardError
-
-  // Parse the command line.
-  let args: DriverArguments
-  do {
-    if CommandLine.arguments.contains(where: { ($0 == "-h") || ($0 == "--help") }) {
-      stderr << """
-      usage: \(CommandLine.arguments[0]) [options] file
-      options:
-        -h, --help          : Print this help message.
-        -u, --unparse       : Print the program, right after it has been parsed.
-        -e, --eval          : Evaluate the program rather than compiling it.
-        -O, --optimize      : Compile with optimizations.
-        -l, --lib <file>    : Configure the location of the runtime library.
-        -o, --output <file> : Write the output to <file>.
-        --dump-ir           : Dump the LLVM IR of the program.
-        --clang <file>      : Configure the path to clang.
-      """
+    // Unparse the program, if requested to.
+    if unparse {
+      for decl in decls {
+        print(decl.unparse())
+      }
+      return
     }
 
-    args = try DriverArguments(arguments: CommandLine.arguments)
-  } catch {
-    print("error: \(error)", to: &stderr)
-    return
+    // Evaluate the program, if requested to.
+    if eval {
+      let vm = Interpreter(in: context)
+      vm.eval(program: decls)
+      return
+    }
+
+    // Emit the LLVM IR fo the program.
+    let module = try Emitter.emit(program: decls)
+
+    // Apply optimizations, if requested to.
+    if optimize {
+      let pipeliner = PassPipeliner(module: module)
+      pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
+      pipeliner.execute()
+    }
+
+    // Emit human readable assembly, if requested to.
+    var file = productFile
+    if emitIR {
+      if file.pathExtension.isEmpty {
+        file.appendPathExtension("ll")
+      }
+
+      try String(describing: module).write(to: file, atomically: true, encoding: .utf8)
+      return
+    }
+
+    // Compile the program.
+    let target = try TargetMachine(optLevel: optimize ? .default : .none)
+    module.targetTriple = target.triple
+
+    // Emit the requested output.
+    if emitAssembly {
+      if file.pathExtension.isEmpty {
+        file.appendPathExtension("s")
+      }
+      try target.emitToFile(module: module, type: .assembly, path: file.path)
+      return
+    }
+
+    if emitObject {
+      if file.pathExtension.isEmpty {
+        file.appendPathExtension("o")
+      }
+      try target.emitToFile(module: module, type: .object, path: file.path)
+      return
+    }
+
+    try makeExec(target: target, module: module)
   }
 
-  // Open and read the input file.
-  guard let source = try? String(contentsOfFile: args.sourcePath) else {
-    print("error: couldn't read file '\(args.sourcePath)'", to: &stderr)
-    return
+  /// Generates an executable.
+  func makeExec(target: TargetMachine, module: Module) throws {
+    // Create a temporary directory.
+    let tmp = try FileManager.default.url(
+      for: .itemReplacementDirectory,
+      in: .userDomainMask,
+      appropriateFor: productFile,
+      create: true)
+
+    // Compile the LLVM module.
+    let moduleObject = tmp.appendingPathComponent(module.name).appendingPathExtension("o")
+    try target.emitToFile(module: module, type: .object, path: moduleObject.path)
+
+    // Produce the executable.
+    let linkExec = Process()
+    linkExec.executableURL = URL(fileURLWithPath: clangPath)
+    linkExec.arguments = [moduleObject.path, runtimePath, "-lm", "-o", productFile.path]
+    try linkExec.run()
+    linkExec.waitUntilExit()
   }
 
-  // Parse the program.
-  let context = Context(source: source)
-  let parser = Parser(in: context)
-  let decls = parser.parse()
-
-  // Unparse the progra, if requested to.
-  if args.unparse {
-    decls.forEach({ decl in _ = decl.unparse() })
-    return
-  }
-
-  // Evaluate the program, if requested to.
-  if args.eval {
-    let vm = Interpreter(in: context)
-    vm.eval(program: decls)
-    return
-  }
-
-  // Emit the LLVM IR fo the program.
-  let module: Module
-  do {
-    module = try Emitter.emit(program: decls)
-  } catch {
-    print("error: \(error)", to: &stderr)
-    return
-  }
-
-  // Apply optimizations, if requested to.
-  if args.optimize {
-    let pipeliner = PassPipeliner(module: module)
-    pipeliner.addStandardModulePipeline("opt", optimization: .default, size: .default)
-    pipeliner.execute()
-  }
-
-  // Prints the human readable assembly, if requested to.
-  if args.dumpIR {
-    print(module)
-  }
-
-  // Compile the program.
-  let target = try TargetMachine(optLevel: args.optimize ? .default : .none)
-  module.targetTriple = target.triple
-
-  if let fileType = args.fileType {
-    try target.emitToFile(module: module, type: fileType, path: args.productPath)
-  } else {
-    try makeExec(target: target, module: module, args: args)
-  }
 }
 
-try run()
+Cocodoc.main()

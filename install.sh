@@ -1,10 +1,8 @@
 #!/bin/sh
 
 CC=cc
-# LIB_DIR=/usr/local/lib/
-# BIN_DIR=/usr/local/bin/
-LIB_DIR=/tmp/thedoors
-BIN_DIR=/tmp/thedoors
+LIB_DIR=/usr/local/lib/
+BIN_DIR=/usr/local/bin/
 
 # Exit when any command fails
 set -e
