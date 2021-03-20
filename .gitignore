@@ -9,4 +9,5 @@
 .DS_Store
 
 # Project-specific settings
+/Runtime/build/**
 /Sources/CCocodol/build/**
