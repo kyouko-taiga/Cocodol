@@ -144,6 +144,14 @@ struct DriverArguments {
     guard !sourcePath.isEmpty else {
       throw DriverError(description: "no input file")
     }
+
+    // Generate a product path if none was given.
+    if productPath.isEmpty {
+      let cwd = FileManager.default.currentDirectoryPath
+      var url = URL(fileURLWithPath: sourcePath)
+      url.deletePathExtension()
+      productPath = URL(fileURLWithPath: cwd).appendingPathComponent(url.lastPathComponent).path
+    }
   }
 
 }
