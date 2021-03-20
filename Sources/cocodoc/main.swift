@@ -4,11 +4,15 @@ import Cocodol
 import CodeGen
 import LLVM
 
-/// A wrapper around the system's standard error.
-struct StandardError: TextOutputStream {
+extension FileHandle: TextOutputStream {
 
-  mutating func write(_ string: String) {
-    _ = string.withCString({ cstr in fputs(cstr, stderr) })
+  public func write(_ string: String) {
+    let data = string.data(using: .utf8)!
+    write(data)
+  }
+
+  static func << (handle: FileHandle, string: String) {
+    handle.write(string)
   }
 
 }
@@ -39,17 +43,18 @@ struct DriverError: Error, CustomStringConvertible {
 /// A set of driver arguments.
 struct DriverArguments {
 
-  /// Indicates that the driver should dump the AST of the program, right after it has been parsed.
-  var dumpAST = false
+  /// Indicates that the driver should print the unparsed AST of the program, right after it has
+  /// been parsed.
+  var unparse = false
 
-  /// Indicates that the driver should dump the LLVM IR of the program.
-  var dumpIR = false
+  /// Inidicates that the driver should interpret the program, rather than compiling it.
+  var eval = false
 
   /// Indicates that the driver should compile with optimizations.
   var optimize = false
 
-  /// Inidicates that the driver should evaluate the program, rather than producing an executable.
-  var eval = false
+  /// Indicates that the driver should dump the LLVM IR of the program.
+  var dumpIR = false
 
   /// The path of the source program.
   var sourcePath = ""
@@ -58,7 +63,7 @@ struct DriverArguments {
   var productPath = ""
 
   /// The path of Cocodol' runtime library.
-  var runtimePath = ""
+  var runtimePath = "/usr/local/lib/libcocodol_rt.a"
 
   /// The path of clang's executable.
   var clangPath = "/usr/bin/clang"
@@ -79,16 +84,19 @@ struct DriverArguments {
     while let name = args.first {
       args.removeFirst()
       switch name {
-      case "--dump-ast":
-        dumpAST = true
+      case "-u", "--unparse":
+        unparse = true
 
-      case "--dump-ir":
-        dumpIR = true
+      case "-e", "--eval":
+        eval = true
 
       case "-O", "--optimize":
         optimize = true
 
-      case "--rt-root":
+      case "--dump-ir":
+        dumpIR = true
+
+      case "-l", "--lib":
         guard let path = args.popFirst() else {
           throw DriverError(description: "missing directory path")
         }
@@ -142,9 +150,8 @@ struct DriverArguments {
 
 /// Generates a product.
 func makeExec(target: TargetMachine, module: Module, args: DriverArguments) throws {
-  let productURL  = URL(fileURLWithPath: args.productPath)
-  let runtimeURL  = URL(fileURLWithPath: args.runtimePath)
-  let clangURL    = URL(fileURLWithPath: args.clangPath)
+  let productURL = URL(fileURLWithPath: args.productPath)
+  let clangURL = URL(fileURLWithPath: args.clangPath)
 
   // Create a temporary directory.
   let tmp = try FileManager.default.url(
@@ -157,41 +164,44 @@ func makeExec(target: TargetMachine, module: Module, args: DriverArguments) thro
   let moduleObject = tmp.appendingPathComponent(module.name).appendingPathExtension("o")
   try target.emitToFile(module: module, type: .object, path: moduleObject.path)
 
-  // Compile the runtime.
-  let runtimeObject = tmp.appendingPathComponent("cocodol_rt.o")
-  let compileRuntime = Process()
-  compileRuntime.executableURL = clangURL
-  compileRuntime.arguments = [
-    "-I", runtimeURL.appendingPathComponent("include").path,
-    runtimeURL.appendingPathComponent("src/cocodol_rt.c").path,
-    "-c", "-o", runtimeObject.path
-  ]
-  try compileRuntime.run()
-  compileRuntime.waitUntilExit()
-
   // Produce the executable.
   let linkExec = Process()
   linkExec.executableURL = clangURL
-  linkExec.arguments = [moduleObject.path, runtimeObject.path, "-o", productURL.path]
+  linkExec.arguments = [moduleObject.path, args.runtimePath, "-o", productURL.path]
   try linkExec.run()
 }
 
 /// The program's entry point.
 func run() throws {
-  var standardError = StandardError()
+  var stderr = FileHandle.standardError
 
   // Parse the command line.
   let args: DriverArguments
   do {
+    if CommandLine.arguments.contains(where: { ($0 == "-h") || ($0 == "--help") }) {
+      stderr << """
+      usage: \(CommandLine.arguments[0]) [options] file
+      options:
+        -h, --help          : Print this help message.
+        -u, --unparse       : Print the program, right after it has been parsed.
+        -e, --eval          : Evaluate the program rather than compiling it.
+        -O, --optimize      : Compile with optimizations.
+        -l, --lib <file>    : Configure the location of the runtime library.
+        -o, --output <file> : Write the output to <file>.
+        --dump-ir           : Dump the LLVM IR of the program.
+        --clang <file>      : Configure the path to clang.
+      """
+    }
+
     args = try DriverArguments(arguments: CommandLine.arguments)
   } catch {
-    print("error: \(error)", to: &standardError)
+    print("error: \(error)", to: &stderr)
     return
   }
 
   // Open and read the input file.
   guard let source = try? String(contentsOfFile: args.sourcePath) else {
-    print("error: couldn't read file '\(args.sourcePath)'", to: &standardError)
+    print("error: couldn't read file '\(args.sourcePath)'", to: &stderr)
     return
   }
 
@@ -199,7 +209,9 @@ func run() throws {
   let context = Context(source: source)
   let parser = Parser(in: context)
   let decls = parser.parse()
-  if args.dumpAST {
+
+  // Unparse the progra, if requested to.
+  if args.unparse {
     decls.forEach({ decl in _ = decl.unparse() })
     return
   }
@@ -216,7 +228,7 @@ func run() throws {
   do {
     module = try Emitter.emit(program: decls)
   } catch {
-    print("error: \(error)", to: &standardError)
+    print("error: \(error)", to: &stderr)
     return
   }
 
