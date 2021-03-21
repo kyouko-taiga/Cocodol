@@ -544,7 +544,8 @@ public final class Emitter {
 
     // Emit the assignment.
     let rvalue = try emit(expr: assignment.rhs.adaptAsExpr()!)
-    return builder.buildStore(emit(copy: rvalue), to: lvalue)
+    builder.buildStore(emit(copy: rvalue), to: lvalue)
+    return constObject(kind: .junk)
   }
 
   /// Emits a function application.
@@ -569,7 +570,8 @@ public final class Emitter {
         let arg = try emit(expr: expr.args[0].adaptAsExpr()!)
         let _0 = builder.buildExtractValue(arg, index: 0)
         let _1 = builder.buildExtractValue(arg, index: 1)
-        return builder.buildCall(printFunction, args: [_0, _1])
+        _ = builder.buildCall(printFunction, args: [_0, _1])
+        return constObject(kind: .junk)
       }
 
       // Search within the locals.
@@ -654,7 +656,8 @@ public final class Emitter {
 
   /// Emits an expression statement.
   func emit(stmt: ExprStmt) throws -> EmitterAction {
-    _ = try emit(expr: stmt.expr.adaptAsExpr()!)
+    let value = try emit(expr: stmt.expr.adaptAsExpr()!)
+    emit(drop: value)
     return .proceed
   }
 
