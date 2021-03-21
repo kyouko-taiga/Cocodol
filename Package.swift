@@ -7,6 +7,10 @@ let package = Package(
   platforms: [
     .macOS(.v11),
   ],
+  products: [
+    .executable(name: "cocodoc", targets: ["Driver"]),
+    .library(name: "Cocodol", targets: ["Cocodol"]),
+  ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser.git", from: "0.4.0"),
     .package(name: "LLVM", url: "https://github.com/llvm-swift/LLVMSwift.git", .branch("master")),
@@ -14,7 +18,7 @@ let package = Package(
   targets: [
     // The driver's target.
     .target(
-      name: "cocodoc",
+      name: "Driver",
       dependencies: [
         "Cocodol", "CodeGen", "LLVM",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),

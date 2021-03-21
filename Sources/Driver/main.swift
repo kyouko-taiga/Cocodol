@@ -8,6 +8,9 @@ import LLVM
 /// The compiler driver.
 struct Cocodoc: ParsableCommand {
 
+  /// The default library search paths.
+  static var librarySearchPaths = ["/usr/lib", "/usr/local/lib", "/opt/local/lib"]
+
   @Argument(help: "The source program.", transform: URL.init(fileURLWithPath:))
   var inputFile: URL
 
@@ -18,12 +21,14 @@ struct Cocodoc: ParsableCommand {
           help: "Write the output to <output>.")
   var outputFile: String?
 
-  @Option(name: [.customLong("lib")],
-          help: "The path to the runtime library.")
-  var runtimePath = "/usr/local/lib/libcocodol_rt.a"
+  @Option(name: [.customShort("L"), .customLong("lib")],
+          help: ArgumentHelp("Add a custom library search path.", valueName: "path"))
+  var customLibrarySearchPath: String?
 
   @Option(name: [.customLong("clang")], help: "The path to clang.")
-  var clangPath = "/usr/bin/clang"
+  var clangPath: String = {
+    (try? exec("/usr/bin/which", args: ["clang"])) ?? "/usr/bin/clang"
+  }()
 
   @Flag(help: "Print the program as it has been parsed without compiling it.")
   var unparse = false
@@ -122,23 +127,36 @@ struct Cocodoc: ParsableCommand {
 
   /// Generates an executable.
   func makeExec(target: TargetMachine, module: Module) throws {
+    let manager = FileManager.default
+
     // Create a temporary directory.
-    let tmp = try FileManager.default.url(
+    let tmp = try manager.url(
       for: .itemReplacementDirectory,
       in: .userDomainMask,
       appropriateFor: productFile,
       create: true)
+
+    // Search for the runtime library.
+    var searchPaths = Cocodoc.librarySearchPaths
+    if let customPath = customLibrarySearchPath {
+      searchPaths.insert(customPath, at: 0)
+    }
+
+    var runtimePath = "libcocodol_rt.a"
+    for directory in searchPaths {
+      let path = URL(fileURLWithPath: directory).appendingPathComponent("libcocodol_rt.a").path
+      if manager.fileExists(atPath: path) {
+        runtimePath = path
+        break
+      }
+    }
 
     // Compile the LLVM module.
     let moduleObject = tmp.appendingPathComponent(module.name).appendingPathExtension("o")
     try target.emitToFile(module: module, type: .object, path: moduleObject.path)
 
     // Produce the executable.
-    let linkExec = Process()
-    linkExec.executableURL = URL(fileURLWithPath: clangPath)
-    linkExec.arguments = [moduleObject.path, runtimePath, "-lm", "-o", productFile.path]
-    try linkExec.run()
-    linkExec.waitUntilExit()
+    try exec(clangPath, args: [moduleObject.path, runtimePath, "-lm", "-o", productFile.path])
   }
 
 }
