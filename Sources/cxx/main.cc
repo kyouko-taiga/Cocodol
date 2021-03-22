@@ -9,9 +9,9 @@ extern "C" {
 #include "cocodol.h"
 }
 
-static llvm::LLVMContext TheContext;
-static llvm::IRBuilder<> Builder(TheContext);
-static std::unique_ptr<llvm::Module> TheModule;
+static llvm::LLVMContext TheLLVMContext;
+static std::unique_ptr<llvm::Module>      TheModule;
+static std::unique_ptr<llvm::IRBuilder<>> TheBuilder;
 
 static void report_parse_error(ParseError error, const ParserState* state) {
   std::cout << error.location << ": error: " << error.message << std::endl;
@@ -34,7 +34,24 @@ int main(int argc, char* argv[]) {
     free(*declv);
   }
 
+  using namespace llvm;
+
+  // Create a module.
+  TheModule  = std::make_unique<Module>("main", TheLLVMContext);
+  TheBuilder = std::make_unique<IRBuilder<>>(TheLLVMContext);
+
   // Write code generation here ...
+  auto i32 = Type::getInt32Ty(TheLLVMContext);
+
+  std::vector<Type*> dom;
+  auto mainType = FunctionType::get(i32, dom, false);
+  auto mainFunc =
+    Function::Create(mainType, Function::ExternalLinkage, "main", *TheModule);
+  auto entry = BasicBlock::Create(TheLLVMContext, "entry", mainFunc);
+  TheBuilder->SetInsertPoint(entry);
+  TheBuilder->CreateRet(ConstantInt::get(i32, 0, true));
+
+  TheModule->print(llvm::errs(), nullptr);
 
   // Cleanup.
   parser_deinit(&parser);
