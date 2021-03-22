@@ -11,7 +11,7 @@
 #define NODE_STMT_BIT (1 << 18)
 
 /// The kind of an AST Node.
-typedef enum NodeKind {
+typedef enum NodeKind: unsigned int {
   nk_error        = 0,
 
   nk_top_decl     = 1 | NODE_DECL_BIT,

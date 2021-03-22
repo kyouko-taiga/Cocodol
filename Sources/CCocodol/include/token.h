@@ -17,7 +17,7 @@
 #define SHIFT_PRECEDENCE          (1 << 14)
 
 /// The kind of a token.
-typedef enum TokenKind {
+typedef enum TokenKind: unsigned int {
   tk_error      =  0,
 
   tk_name       =  1,

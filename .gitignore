@@ -11,3 +11,4 @@
 # Project-specific settings
 /Runtime/build/**
 /Sources/CCocodol/build/**
+/Sources/cxx/build/**

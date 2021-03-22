@@ -12,11 +12,12 @@ struct  EvalState;
 struct  ParseError;
 struct  ParserState;
 struct  Node;
-enum    NodeKind;
 struct  SymTable;
 struct  Token;
-enum    TokenKind;
 struct  RuntimeValue;
+
+enum    NodeKind  : unsigned int;
+enum    TokenKind : unsigned int;
 
 /// The type of a callback for runtime errors.
 typedef void(*EvalErrorCallback)(struct EvalError, const struct EvalState*);
